@@ -29,27 +29,98 @@ class TextProcessor:
             password=self.db_config['password']
         )
 
-    #TODO:
-    # provide method `process_text_file` that will:
-    #   - apply file name, chunk size, overlap, dimensions and bool of the table should be truncated
-    #   - truncate table with vectors if needed
-    #   - load content from file and generate chunks (in `utils.text` present `chunk_text` that will help do that)
-    #   - generate embeddings from chunks
-    #   - save (insert) embeddings and chunks to DB
-    #       hint 1: embeddings should be saved as string list
-    #       hint 2: embeddings string list should be casted to vector ({embeddings}::vector)
+    def process_text_file(self, file_name: str, chunk_size: int, overlap: int, dimensions: int, truncate: bool = False):
+        """
+        Process text file: chunk it, generate embeddings, and store in database.
+        
+        Args:
+            file_name: Path to the text file to process
+            chunk_size: Size of each text chunk
+            overlap: Overlap between consecutive chunks
+            dimensions: Embedding dimensions
+            truncate: Whether to truncate the vectors table before inserting
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Truncate table if needed
+            if truncate:
+                cursor.execute("TRUNCATE TABLE vectors RESTART IDENTITY")
+            
+            # Load content from file
+            with open(file_name, 'r') as f:
+                content = f.read()
+            
+            # Generate chunks
+            chunks = chunk_text(content, chunk_size, overlap)
+            
+            # Generate embeddings
+            embeddings_dict = self.embeddings_client.get_embeddings(chunks)
+            
+            # Insert embeddings and chunks to DB
+            for index, chunk_text_content in enumerate(chunks):
+                embedding = embeddings_dict[index]
+                embedding_str = str(embedding)
+                
+                cursor.execute(
+                    """
+                    INSERT INTO vectors (document_name, text, embedding) 
+                    VALUES (%s, %s, %s::vector)
+                    """,
+                    (file_name, chunk_text_content, embedding_str)
+                )
+            
+            conn.commit()
+            cursor.close()
+        finally:
+            conn.close()
 
 
 
 
-    #TODO:
-    # provide method `search` that will:
-    #   - apply search mode, user request, top k for search, min score threshold and dimensions
-    #   - generate embeddings from user request
-    #   - search in DB relevant context
-    #     hint 1: to search it in DB you need to create just regular select query
-    #     hint 2: Euclidean distance `<->`, Cosine distance `<=>`
-    #     hint 3: You need to extract `text` from `vectors` table
-    #     hint 4: You need to filter distance in WHERE clause
-    #     hint 5: To get top k use `limit`
+    def search(self, search_mode: SearchMode, user_request: str, top_k: int, min_score_threshold: float, dimensions: int) -> list[dict]:
+        """
+        Search for relevant context based on user request using vector similarity.
+        
+        Args:
+            search_mode: SearchMode.EUCLIDIAN_DISTANCE or SearchMode.COSINE_DISTANCE
+            user_request: The user's search query
+            top_k: Number of top results to return
+            min_score_threshold: Minimum distance threshold for results
+            dimensions: Embedding dimensions
+            
+        Returns:
+            List of relevant documents with text and distance score
+        """
+        # Generate embeddings from user request
+        request_embeddings = self.embeddings_client.get_embeddings([user_request])
+        request_embedding = request_embeddings[0]
+        embedding_str = str(request_embedding)
+        
+        # Select appropriate distance operator
+        distance_operator = "<->" if search_mode == SearchMode.EUCLIDIAN_DISTANCE else "<=>"
+        
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Search in DB with distance filtering
+            query = f"""
+                SELECT 
+                    text, 
+                    embedding {distance_operator} %s::vector AS distance
+                FROM vectors
+                WHERE embedding {distance_operator} %s::vector < %s
+                ORDER BY distance ASC
+                LIMIT %s
+            """
+            
+            cursor.execute(query, (embedding_str, embedding_str, min_score_threshold, top_k))
+            results = cursor.fetchall()
+            cursor.close()
+            
+            return results
+        finally:
+            conn.close()
 
