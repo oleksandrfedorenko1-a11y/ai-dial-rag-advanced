@@ -44,7 +44,7 @@ embeddings_client = DialEmbeddingsClient(
 )
 
 chat_completion_client = DialChatCompletionClient(
-    deployment_name='gpt-4o-mini',
+    deployment_name='gpt-4o-mini-2024-07-18',
     api_key=API_KEY
 )
 
@@ -64,6 +64,17 @@ text_processor = TextProcessor(
 
 def run_chat():
     """Run console chat with RAG augmentation"""
+    # Ingest the microwave manual into the database
+    print("Loading microwave manual into vector database...")
+    text_processor.process_text_file(
+        file_name='task/embeddings/microwave_manual.txt',
+        chunk_size=500,
+        overlap=50,
+        dimensions=1536,
+        truncate=True
+    )
+    print("Microwave manual loaded successfully!\n")
+    
     conversation = Conversation()
     
     # Add system prompt to conversation
@@ -93,7 +104,6 @@ def run_chat():
             min_score_threshold=0.5,
             dimensions=1536
         )
-        
         # Create RAG context from search results
         rag_context = "\n".join([result['text'] for result in search_results])
         
@@ -108,13 +118,13 @@ def run_chat():
         conversation.add_message(user_message)
         
         # Generate response
-        response_content = chat_completion_client.get_completion(conversation)
+        response_content = chat_completion_client.get_completion(conversation.messages)
         
         # Add assistant response to conversation
-        assistant_message = Message(role=Role.ASSISTANT, content=response_content)
+        assistant_message = Message(role=Role.AI, content=response_content.content)
         conversation.add_message(assistant_message)
         
-        print(f"Assistant: {response_content}\n")
+        print(f"Assistant: {response_content.content}\n")
 
 
 if __name__ == '__main__':
