@@ -39,7 +39,7 @@ class DialEmbeddingsClient:
         url = DIAL_EMBEDDINGS.format(model=self.deployment_name)
         
         headers = {
-            'Authorization': f'Bearer {self.api_key}',
+            'Api-Key': f'{self.api_key}',
             'Content-Type': 'application/json'
         }
         
